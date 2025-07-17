@@ -1,0 +1,338 @@
+import streamlit as st
+import json, warnings, re
+
+warnings.filterwarnings('ignore')
+import streamlit.components.v1 as components
+import importlib
+from rag_chatbot import RAG_Chatbot
+import recommend as recommend
+
+importlib.reload(recommend)
+from recommend import get_recommendation_from_web
+from config import load_config
+
+cfg = load_config()
+rag_chatbot = RAG_Chatbot(cfg)
+
+# 페이지 설정
+st.set_page_config(
+    page_title="🌿 NutriWise - AI 영양제 추천",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# 사용자 정의 CSS
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #a8edea 0%, #d3f8e2 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        text-align: center;
+        color: #1a202c;
+        margin-bottom: 2rem;
+    }
+
+    .ingredient-tag { 
+        background: #e6fffa;
+        color: #234e52;
+        padding: 0.3rem 0.8rem;
+        border-radius: 15px;
+        font-size: 0.8rem;
+        margin: 0.2rem;
+        display: inline-block;
+    }
+
+    .warning-box { 
+        background: #fef5e7;
+        border: 2px solid #f6ad55;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+
+    .chat-message { 
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 10px;
+        border-left: 4px solid #667eea;
+    }
+
+    .user-message { 
+        background: #e6f3ff;
+        text-align: right;
+    }
+
+    .bot-message { 
+        background: #f0f9ff;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# 메인 헤더
+st.markdown("""
+<div class="main-header">
+    <h1>🌿 NutriWise</h1>
+    <p style="font-size: 1.2rem; margin-top: 0.5rem;">RAG 기반 개인 맞춤형 영양제 추천 시스템</p>
+</div>
+""", unsafe_allow_html=True)
+
+# 사이드바 - 개인정보 입력
+st.sidebar.header("👤 개인정보 입력")
+
+# 기본 정보
+age = st.sidebar.number_input("나이", min_value=1, max_value=120, value=30)
+gender = st.sidebar.selectbox("성별", ["남성", "여성"])
+# 임신 여부 체크
+is_pregnant = None
+pregnancy_text = ""  # 기본값
+
+if gender == "여성":
+    is_pregnant = st.sidebar.checkbox("임신 여부")
+    if is_pregnant:
+        pregnancy_text = " (임신 중)"
+
+# 건강 관심사
+st.sidebar.subheader("건강 관심사")
+health_goals = []
+if st.sidebar.checkbox("면역력 강화"):
+    health_goals.append("immunity")
+if st.sidebar.checkbox("피부 건강"):
+    health_goals.append("skin")
+if st.sidebar.checkbox("에너지/피로 회복"):
+    health_goals.append("energy")
+if st.sidebar.checkbox("관절 건강"):
+    health_goals.append("joint")
+if st.sidebar.checkbox("소화/장 건강"):
+    health_goals.append("digest")
+if st.sidebar.checkbox("스트레스 관리"):
+    health_goals.append("stress")
+
+# 세션 상태 초기화
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'recommendations' not in st.session_state:
+    st.session_state.recommendations = []
+
+# 메인 탭 구성
+tab1, tab2, tab3 = st.tabs(["💬 질의응답", "🎯 맞춤 추천", "📷 영양제 사진 검색"])
+
+# 탭 1: 질의응답
+with tab1:
+    st.header("💬 식품의약품안전처 건강기능식품정보 기반 Q&A")
+
+    # 샘플 질문 버튼
+    st.subheader("자주 묻는 질문")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("🌟 피부에 좋은 영양제는?"):
+            user_input = "피부에 좋은 영양제 추천해주세요"
+            st.session_state.chat_history.append({"type": "user", "message": user_input})
+            with st.spinner("AI가 답변 중입니다..."):
+                response = rag_chatbot.run(user_input)
+                st.session_state.chat_history.append({"type": "bot", "message": response})
+
+    with col2:
+        if st.button("⚡ 피로 회복에 도움되는 것은?"):
+            user_input = "피로 회복에 도움이 되는 영양제는 무엇인가요?"
+            st.session_state.chat_history.append({"type": "user", "message": user_input})
+            with st.spinner("AI가 답변 중입니다..."):
+                response = rag_chatbot.run(user_input)
+                st.session_state.chat_history.append({"type": "bot", "message": response})
+
+    with col3:
+        if st.button("🤔 비타민D와 칼슘 같이 먹어도 되나요?"):
+            user_input = "비타민D와 칼슘을 같이 먹어도 되나요?"
+            st.session_state.chat_history.append({"type": "user", "message": user_input})
+            with st.spinner("AI가 답변 중입니다..."):
+                response = rag_chatbot.run(user_input)
+                st.session_state.chat_history.append({"type": "bot", "message": response})
+
+    # 채팅 입력
+    user_input = st.text_input("궁금한 것을 물어보세요...", key="chat_input")
+
+    if st.button("전송") and user_input:
+        st.session_state.chat_history.append({"type": "user", "message": user_input})
+        st.success(f"당신의 프로필 : {age}세 {gender}{pregnancy_text}에 맞춘 식품의약품안전처 건강기능식품정보 입니다!")
+
+        with st.spinner("AI가 답변 중입니다..."):
+            user_input = str(age) + '세 ' + gender + ('(임신중)' if is_pregnant else '') + ' ' + user_input
+            response = rag_chatbot.run(user_input)
+            st.session_state.chat_history.append({"type": "bot", "message": response})
+
+    # 질문-답변 묶기
+    chat_pairs = []
+    history = st.session_state.chat_history
+    i = 0
+
+    while i < len(history) - 1:
+        if history[i]["type"] == "user" and history[i + 1]["type"] == "bot":
+            chat_pairs.append((history[i], history[i + 1]))
+            i += 2
+        else:
+            i += 1  # 짝이 안 맞는 경우 넘어감
+
+    # 최근 것이 위로 오도록 역순 출력
+    for user_msg, bot_msg in reversed(chat_pairs):
+        st.markdown(f"""
+        <div class="chat-message user-message">
+            <strong>질문:</strong> {user_msg["message"]}
+        </div>
+        <div class="chat-message bot-message">
+            <strong>🤖 NutriWise AI 답변:</strong> {bot_msg["message"]}
+        </div>
+        """, unsafe_allow_html=True)
+
+# 탭 2: 맞춤 추천
+with tab2:
+    st.header("🎯 개인 맞춤형 AI 추천")
+
+    if st.button("🔍 맞춤 추천 생성하기", type="primary"):
+        if age and gender:
+            with st.spinner("AI가 맞춤 추천을 생성하고 있습니다..."):
+
+                # 사용자 조건에 따라 검색 쿼리 설정
+                goal_mapping = {
+                    "immunity": "면역력 강화",
+                    "skin": "피부 건강",
+                    "energy": "피로 회복",
+                    "joint": "관절 건강",
+                    "digest": "소화/장 건강",
+                    "stress": "스트레스 관리"
+                }
+
+                selected_goals_ko = [goal_mapping[goal] for goal in health_goals]
+
+                if selected_goals_ko:
+                    goals_text = " / ".join(selected_goals_ko)
+                    query = f"{age}세 {gender}{pregnancy_text}를 위한 {goals_text} 관련 건강기능식품 추천"
+                else:
+                    query = f"{age}세 {gender}{pregnancy_text}에게 일반적으로 추천되는 건강기능식품"
+
+                # 웹 기반 추천 호출
+                web_products = get_recommendation_from_web(query, cfg)  # 이미 파싱된 리스트를 반환
+                if isinstance(web_products, list):
+                    st.session_state.recommendations = web_products
+                else:
+                    st.error("추천 정보를 파싱하는 데 실패했습니다. 응답 내용:\n" + str(web_products))
+                    st.stop()
+        else:
+            st.error("사이드바에서 개인정보를 모두 입력해주세요.")
+
+    # 결과 렌더링
+    if st.session_state.recommendations:
+        st.success(f"당신의 프로필({age}세 {gender}{pregnancy_text})에 맞춘 AI 추천 제품입니다!")
+
+        for product in st.session_state.recommendations:
+            image_src = product.get('image_url', '')
+            image_html = f'<img src="{image_src}" alt="{product["name"]} 이미지">' if image_src else ''
+
+            components.html(f"""
+            <style>
+                .product-card {{
+                    background: #f8fafc;
+                    border: 2px solid #e2e8f0;
+                    border-radius: 10px;
+                    padding: 1.5rem;
+                    margin: 1rem 0;
+                    border-left: 5px solid #667eea;
+                }}
+                
+                .product-image {{
+                    width: 300px;  
+                    height: 300px; 
+                    overflow: hidden; 
+                    display: flex; 
+                    justify-content: center; 
+                    align-items: center; 
+                    margin: 0 auto 15px auto; 
+                    border-radius: 5px;
+                    flex-shrink: 0;
+                }}  
+
+                .product-image img {{
+                    max-width: 100%;  
+                    max-height: 100%; 
+                    object-fit: contain; 
+                    display: block; 
+                }}
+            </style>
+            
+            
+            <div class="product-card">
+                <h3>🌟 {product['name']}</h3>
+                <div class="product-image">{image_html}</div>
+                <p><strong>브랜드:</strong> {product['brand']} | <strong>가격:</strong> {product['price']}</p>
+                <p><strong>평점:</strong> ⭐ {product['rating']}/5.0 ({product['reviews']}개 리뷰)</p>
+
+                <p><strong>주요 성분:</strong>
+                    {' '.join([f'<span class="ingredient-tag">{i}</span>' for i in product['ingredients']])}
+                </p>
+
+                <p><strong>기대 효과:</strong>
+                    {' • '.join(product['benefits'])}</p>
+
+                <p><strong>복용법:</strong>
+                    {product['dosage']}</p>
+
+                <div class="warning-box">
+                    <h4>⚠️ 주의사항:</h4>
+                    <ul>
+                        {''.join([f'<li>{w}</li>' for w in product['warnings']])}
+                    </ul>
+                </div>
+            </div>
+            """, height=800, scrolling=True)
+
+# 탭 3: 사진 검색
+with tab3:
+    st.header("📷 사진 속 영양제 정보 확인")
+
+    # 이미지 업로드
+    uploaded_file = st.file_uploader("💊 영양제 사진을 업로드하세요", type=["jpg", "jpeg", "png"])
+
+    if uploaded_file:
+        st.image(uploaded_file, caption="업로드한 사진", width=800)
+
+        with st.spinner("🧠 PaddleOCR로 텍스트 인식 중입니다..."):
+            # OCR 결과 텍스트로 대체
+            ocr_text = rag_chatbot.run(use_ocr=True, img_file=uploaded_file)
+            # ocr_text = "이곳에 인식된 텍스트가 표시됩니다"
+            product_blocks = re.split(r"<<[^<>]+>>", ocr_text)
+            product_blocks = [block.strip() for block in product_blocks if block.strip()]
+
+            # 제품명 추출 (for 제목 출력)
+            titles = re.findall(r"<<([^<>]+)>>", ocr_text)
+
+            # Streamlit 출력
+            st.markdown("#### 🔍 예상 제품")
+            for idx, (title, body) in enumerate(zip(titles, product_blocks)):
+                with st.expander(f"📦 {title}"):
+                    st.markdown(
+                        f"""
+                        <div style='font-size:20px; font-weight:bold; margin-bottom:10px;'>
+                        {title}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    st.markdown(
+                        f"""
+                        <div style="font-size:15px; line-height:1.6;">
+                        {body.replace("-", "•").replace("\n", "<br>")}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+# 하단 정보
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 20px;">
+    <p>⚠️ 본 서비스는 정보 제공 목적이며, 의료진과 상담 후 복용하시기 바랍니다.</p>
+    <p>🔬 AI 추천 시스템은 지속적으로 학습하고 개선됩니다.</p>
+</div>
+""", unsafe_allow_html=True)
